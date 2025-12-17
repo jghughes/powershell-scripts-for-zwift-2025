@@ -1,0 +1,20 @@
+# Generated output files
+*-filtered-*.txt
+*-excluded-*.txt
+
+# Production folders (not in repo)
+incoming/
+processed/
+reports/
+
+# Windows
+Thumbs.db
+desktop.ini
+
+# PowerShell
+*.ps1~
+
+# Log files (except samples)
+*.log
+Log_*.txt
+!samples/Log*.txt
