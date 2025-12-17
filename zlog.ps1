@@ -173,7 +173,12 @@ $MAX_ERROR_DETAIL_LENGTH = 250
 # Resolve full path and derive output directory
 $LogPath = Resolve-Path $LogPath | Select-Object -ExpandProperty Path
 if (-not $OutDir) {
-    $OutDir = Split-Path $LogPath -Parent
+    # Default to production reports folder instead of input file location
+    $OutDir = "C:\Users\johng\holding_pen\StuffForZwiftLogs\reports"
+    # Create the directory if it doesn't exist
+    if (-not (Test-Path $OutDir)) {
+        New-Item -Path $OutDir -ItemType Directory -Force | Out-Null
+    }
 }
 
 # Timestamp for run
