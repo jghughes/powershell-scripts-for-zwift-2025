@@ -1,6 +1,6 @@
 # Generated output files
-*-filtered-*.txt
-*-excluded-*.txt
+**/*-filtered-*.txt
+**/*-excluded-*.txt
 
 # Production folders (not in repo)
 incoming/
@@ -14,7 +14,5 @@ desktop.ini
 # PowerShell
 *.ps1~
 
-# Log files (except samples)
+# Log files (but keep samples)
 *.log
-Log_*.txt
-!samples/Log*.txt
