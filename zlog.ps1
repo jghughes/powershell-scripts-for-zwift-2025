@@ -1,11 +1,11 @@
 <#
 .SYNOPSIS
-    Analyzes Zwift log files to identify connection problems and session issues.
+    Analyzes Zwift log files to identify connection problems and other issues.
 
 .DESCRIPTION
     Parses Zwift application log files, filters relevant connectivity events,
-    and generates a diagnostic report distinguishing between clean sessions
-    and problematic sessions with connection issues. Detects seamless server
+    and generates a diagnostic report distinguishing between clean rides
+    and problematic rides with connection issues. Detects seamless server
     reconnections vs disruptive disconnects.
     
     Uses a hybrid workflow: reads from incoming folder, writes to processed folder
@@ -13,7 +13,7 @@
     alongside filtered and excluded outputs, allowing reprocessing if needed.
 
 .PARAMETER ZwiftLogFileName
-    Filename of the Zwift log file to analyze (e.g., "Log_2025-12-15_clean_session.txt").
+    Filename of the Zwift log file to analyze (e.g., "Log_2025-12-15_clean_ride.txt").
     The file must exist in the incoming folder: C:\Users\johng\holding_pen\StuffForZwiftLogs\incoming
 
 .PARAMETER OutputDirectoryPath
@@ -37,33 +37,33 @@
     Displays this help documentation. Beginner-friendly alternative to Get-Help.
 
 .EXAMPLE
-    .\zlog.ps1 "Log_2025-12-15_clean_session.txt"
+    .\zlog.ps1 "Log_2025-12-15_clean_ride.txt"
     Auto-detects all BLE devices in the log and analyzes them.
 
 .EXAMPLE
-    .\zlog.ps1 "Log_2025-12-15_clean_session.txt" -Devices "Wahoo KICKR"
+    .\zlog.ps1 "Log_2025-12-15_clean_ride.txt" -Devices "Wahoo KICKR"
     Analyzes only Wahoo KICKR trainer, ignoring other devices.
 
 .EXAMPLE
-    .\zlog.ps1 "Log_2025-12-15_clean_session.txt" -Devices "Wahoo KICKR", "HRMPro"
+    .\zlog.ps1 "Log_2025-12-15_clean_ride.txt" -Devices "Wahoo KICKR", "HRMPro"
     Analyzes both trainer and heart rate monitor.
 
 .EXAMPLE
-    .\zlog.ps1 "Log_2025-12-15_clean_session.txt" -ExcludeDevices "HRM"
+    .\zlog.ps1 "Log_2025-12-15_clean_ride.txt" -ExcludeDevices "HRM"
     Auto-detects all devices but excludes heart rate monitors from analysis.
 
 .EXAMPLE
-    .\zlog.ps1 "Log_2025-12-15_clean_session.txt" -Verbose
+    .\zlog.ps1 "Log_2025-12-15_clean_ride.txt" -Verbose
     Shows detailed progress messages explaining what the script is doing at each step.
     Educational mode - excellent for learning how log analysis works.
 
 .EXAMPLE
-    .\zlog.ps1 "Log_2025-12-15_clean_session.txt" -Debug
+    .\zlog.ps1 "Log_2025-12-15_clean_ride.txt" -Debug
     Shows diagnostic decision-making process: why events are classified certain ways,
     which disconnects are seamless vs problematic, and root cause analysis logic.
 
 .EXAMPLE
-    .\zlog.ps1 "Log_2025-12-15_clean_session.txt" -Verbose -Debug
+    .\zlog.ps1 "Log_2025-12-15_clean_ride.txt" -Verbose -Debug
     Combines both detailed progress and diagnostic output for maximum insight.
 
 .NOTES
@@ -77,41 +77,6 @@
     -Debug   : Shows diagnostic decision-making logic (40 debug statements)
     -WhatIf  : Not applicable (script only reads files, doesn't modify originals)
     -Confirm : Not applicable (no destructive operations)
-
-    === PROGRAMMING CONCEPTS DEMONSTRATED ===
-    This script teaches several important programming concepts:
-    
-    1. PARAMETERS & VALIDATION (lines 25-32)
-       - How to accept user input and validate it
-       - Making scripts reusable with different inputs
-    
-    2. CONSTANTS (lines 44-49)
-       - Why we use named constants instead of "magic numbers"
-       - Making code maintainable and self-documenting
-    
-    3. FUNCTIONS (lines 95-125, 164-171)
-       - Breaking complex tasks into reusable pieces
-       - The "Don't Repeat Yourself" (DRY) principle
-    
-    4. ARRAYS & COLLECTIONS (lines 38-41, throughout)
-       - Storing multiple related values together
-       - Processing collections with loops
-    
-    5. CONDITIONAL LOGIC (lines 300-315)
-       - Making decisions based on data
-       - If/else statements and boolean expressions
-    
-    6. PATTERN MATCHING (lines 95-110)
-       - Using regular expressions to find patterns in text
-       - More powerful than simple text comparison
-    
-    7. FILE I/O (lines 58, 200+)
-       - Reading data from files
-       - Writing results to new files
-    
-    8. DATA PIPELINE (lines 195-230)
-       - Transforming data step-by-step
-       - Filtering, sorting, and grouping information
 #>
 
 # Suppress PSScriptAnalyzer warning about Write-Host usage
@@ -123,7 +88,7 @@
 #   - Write-Host behavior in PS 5.0+ is stable and suitable for this use case
 [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingWriteHost', '')]
 param(
-    [Parameter(Mandatory=$false, Position=0)]
+    [Parameter(Mandatory=$false)]
     [string]$ZwiftLogFileName,
     
     [Parameter(Mandatory=$false)]
@@ -157,8 +122,6 @@ if ($Version) {
     Write-Host "  - Device-agnostic BLE connection analysis"
     Write-Host "  - Seamless reconnect detection"
     Write-Host "  - Root cause problem identification"
-    Write-Host "  - Educational verbose mode (108 messages)"
-    Write-Host "  - Diagnostic debug mode (40 messages)"
     Write-Host "`nUsage: Get-Help .\zlog.ps1 -Full" -ForegroundColor Gray
     exit 0
 }
@@ -173,56 +136,18 @@ if (-not $ZwiftLogFileName) {
     exit 1
 }
 
-# =================================================================================
-# ===== DEVICE DETECTION & FILTERING =====
-# ==================================================================================
-# This section handles device pattern configuration. Three modes available:
-#   1. AUTO-DETECT: No -Devices parameter = detect all BLE devices from log
-#   2. EXPLICIT: -Devices parameter = only track specified devices
-#   3. AUTO + EXCLUDE: -ExcludeDevices = auto-detect but exclude certain patterns
-#
-# WHY AUTO-DETECT? So the script works for anyone's hardware without editing!
-# WHY EXPLICIT? To focus analysis on specific devices when troubleshooting.
-# WHY EXCLUDE? To filter out noise from devices you're not interested in.
-#
-# Examples:
-#   .\zlog.ps1 "log.txt"                                    # Auto-detect all
-#   .\zlog.ps1 "log.txt" -Devices "Wahoo KICKR"            # Only trainer
-#   .\zlog.ps1 "log.txt" -ExcludeDevices "HRM", "Phone"    # All except HRM & Phone
-# =================================================================================
-
+# ===== GLOBAL VARIABLES=====
 # Default device patterns (fallback if auto-detection finds nothing)
 $DEFAULT_DEVICE_PATTERNS = @(
     "Wahoo KICKR",
     "HRMPro"
 )
-
-# +---------------------------------------------------------------------------------+
-# | [TIP] PROGRAMMING CONCEPT: Dynamic Configuration                                |
-# +---------------------------------------------------------------------------------+
-# | Instead of hardcoding device names, we use PARAMETERS to make the script       |
-# | flexible. This is called "parameterization" - a key principle in writing       |
-# | reusable code that adapts to different situations without modification.        |
-# |                                                                                 |
-# | THREE STRATEGIES:                                                               |
-# | 1. Explicit (-Devices): User knows exactly what they want                      |
-# | 2. Auto-detect: Script figures it out from the data                            |
-# | 3. Hybrid (-ExcludeDevices): Auto-detect but let user filter results           |
-# |                                                                                 |
-# | This pattern appears everywhere in software: web forms, database queries,      |
-# | search engines - any time you want flexibility without changing code!          |
-# +---------------------------------------------------------------------------------+
-
 # ===== PRODUCTION FOLDER PATHS =====
 # Default locations for input and output files in production workflow
 $INCOMING_FOLDER = "C:\Users\johng\holding_pen\StuffForZwiftLogs\incoming"
 $PROCESSED_FOLDER = "C:\Users\johng\holding_pen\StuffForZwiftLogs\processed"
 
 # ===== CONSTANTS =====
-# Thresholds and configuration values - these are like the "settings" for our script
-# WHY USE CONSTANTS? They make it easy to change behavior without hunting through code!
-# Instead of writing "5" everywhere, we write $SEAMLESS_RECONNECT_THRESHOLD_SECONDS
-# If we need to change it later, we only change it in ONE place!
 
 # WHY 5 SECONDS? This is based on real-world testing. Zwift's server can briefly disconnect
 # and reconnect without disrupting the ride. Anything faster than 5 seconds is "seamless"
@@ -250,60 +175,91 @@ $PROBLEM_PROXIMITY_SECONDS = 120
 # It's like reading a summary instead of a whole book - you get the main point!
 $MAX_ERROR_DETAIL_LENGTH = 250
 
-# +---------------------------------------------------------------------------------+
-# | [WARNING] COMMON MISTAKE: Hardcoding magic numbers throughout your code!        |
-# +---------------------------------------------------------------------------------+
-# | Bad:  if ($timeDiff -le 5) { ... }    (What does 5 mean? Why 5?)              |
-# | Good: if ($timeDiff -le $SEAMLESS_RECONNECT_THRESHOLD_SECONDS) { ... }        |
-# |                                                                                 |
-# | WHY IT MATTERS: If you decide to change 5 to 10, you'd have to find and       |
-# | update EVERY place you wrote "5". With constants, change it ONCE at the top!  |
-# +---------------------------------------------------------------------------------+
-#
-# +---------------------------------------------------------------------------------+
-# | [TIP] TRY THIS! Experiment with different threshold values                      |
-# +---------------------------------------------------------------------------------+
-# | 1. Change $SEAMLESS_RECONNECT_THRESHOLD_SECONDS from 5 to 10                   |
-# |    Run the script and see if more reconnections are now classified as seamless |
-# |                                                                                 |
-# | 2. Change $MAX_ERROR_DETAIL_LENGTH from 250 to 100                             |
-# |    Notice how error messages in the report become shorter                      |
-# |                                                                                 |
-# | 3. Add your own constant: $MINIMUM_SESSION_DURATION = 300  (5 minutes)         |
-# |    Then add code to warn if sessions are shorter than this!                    |
-# +---------------------------------------------------------------------------------+
+# Output file name fragments (constants)
+$FILTERED_FRAGMENT = "filtered"
+$EXCLUDED_FRAGMENT = "excluded"
 
-# +================================================================================+
-# |                          DATA FLOW VISUALIZATION                               |
-# |                   How this script transforms log data                          |
-# +================================================================================+
-#
-#  Raw Log File              Filter Lines           Group Events         Analyze
-#  +----------+             +----------+           +----------+        +----------+
-#  | 20,350   |------------>|  1,280   |---------->| Errors:5 |------->| Report:  |
-#  |  lines   |  Remove     |  lines   |  Identify | Warns: 8 |  Find  | Problems |
-#  |          |  noise      |          |  patterns | Info:1000|  root  | Detected |
-#  +----------+             +----------+           +----------+  cause +----------+
-#       ^                        ^                      ^              ^
-#       |                        |                      |              |
-#   Everything            Only relevant          Group by type    Smart analysis
-#   in the file         device/connection       & timestamp      finds the story
-#                         events                                 behind the data
-#
-# EXAMPLE TRANSFORMATION:
-# Before: "[18:51:07] Process discovery for Wahoo KICKR 5404._wahoo-fitness..."
-# After:  EXCLUDED (happens 1000s of times, not useful for diagnosis)
-#
-# Before: "[18:50:50] [ERROR] LAN Exercise Device: Error connecting to..."
-# After:  KEPT & HIGHLIGHTED - This is a problem we need to investigate!
-#
-# The goal: Turn 20,000 lines of technical logs into a 1-page human-readable diagnosis
+# ===== FUNCTION DEFINITIONS =====
+function Get-Timestamp($line) {
+    if ($line -match '^\[(\d{2}:\d{2}:\d{2})\]') { return $matches[1] }
+    return ""
+}
 
-# ================================================================================
+function Get-LineColor($line) {
+    if ($line -match "\[ERROR\]|Error receiving|Error connecting|Error shutting down|Disconnected|Timeout|Failed to connect|has new connection status: disconnected") { return "Red" }
+    if ($line -match "Reconnecting|Connecting to|ConnectWFTNP|Start scanning") { return "Yellow" }
+    if ($line -match "Connected|established|active|has new connection status: connected") { return "Green" }
+    return "White"
+}
 
+function ConvertFrom-TimeString($timeString) {
+     $parts = $timeString -split ':'
+    return [int]$parts[0] * 3600 + [int]$parts[1] * 60 + [int]$parts[2]
+}
+
+function Format-Duration($seconds) {
+    $hours = [math]::Floor($seconds / 3600)
+    $minutes = [math]::Floor(($seconds % 3600) / 60)
+    if ($hours -gt 0) {
+        return "$hours hour(s) $minutes minute(s)"
+    } else {
+        return "$minutes minute(s)"
+    }
+}
+
+function Get-TrainerInfo($logLines, $devicePatterns) {
+    $trainerLines = @()
+    
+    # Build regex from detected device patterns to find ANY trainer
+    $deviceRegex = ($devicePatterns | ForEach-Object { [regex]::Escape($_) }) -join '|'
+    if (-not $deviceRegex) { return $trainerLines }  # No devices configured
+    
+    # Collect relevant log lines that contain trainer information
+    foreach ($line in $logLines) {
+        # Hardware revision
+        if ($line -match '"([^"]+)" hardware revision number:' -and $matches[1] -match $deviceRegex) {
+            $trainerLines += $line
+        }
+        # Firmware version
+        elseif ($line -match '\[BLE\] "([^"]+)" firmware version:' -and $matches[1] -match $deviceRegex) {
+            $trainerLines += $line
+        }
+        # Software version
+        elseif ($line -match '\[BLE\] "([^"]+)" software version:' -and $matches[1] -match $deviceRegex) {
+            $trainerLines += $line
+        }
+        # Serial number
+        elseif ($line -match '\[ZwiftProtocol\] Device serial number:') {
+            $trainerLines += $line
+        }
+        # Feature flags
+        elseif ($line -match "\[BLE\] (?:$deviceRegex).* Features Supported:") {
+            $trainerLines += $line
+        }
+        
+        # Early exit once we have a reasonable amount of info
+        if ($trainerLines.Count -ge 5) {
+            break
+        }
+    }
+    
+    return $trainerLines
+}
+
+function Add-ProblemEntry($eventCollection, $formatScript) {
+    $entries = @()
+    foreach ($evt in $eventCollection) {
+        $entry = & $formatScript $evt
+        $entries += [PSCustomObject]@{ Time=$evt.Time; Entry=$entry }
+    }
+    return $entries
+}
+
+# ===========================
+# MAIN SCRIPT EXECUTION START
+#============================
 # Verify incoming folder exists
 if (-not (Test-Path $INCOMING_FOLDER)) {
-    # Display formatted error message
     Write-Host ""
     Write-Host "Incoming folder does not exist: " -NoNewline -ForegroundColor Red
     Write-Host $INCOMING_FOLDER -ForegroundColor Yellow
@@ -353,7 +309,7 @@ if (-not (Test-Path $ZwiftLogFilePath -PathType Leaf)) {
     Write-Host "  3. Use one of the available files listed below"
     Write-Host ""
     Write-Host "Example:" -ForegroundColor Cyan
-    Write-Host "  .\zlog.ps1 `"Log_2025-12-15_clean_session.txt`""
+    Write-Host "  .\zlog.ps1 `"Log_2025-12-15_clean_ride.txt`""
     Write-Host ""
     Write-Host ""
     Write-Host "Available files in incoming folder:" -ForegroundColor Cyan
@@ -397,31 +353,21 @@ if (-not $OutputDirectoryPath) {
 # Build output file paths (numbered prefixes preserve logical sort order)
 $analysisDate = Get-Date -Format "yyyy-MM-dd"  # Used for analysis date footer
 $inputFileName = [System.IO.Path]::GetFileNameWithoutExtension($ZwiftLogFilePath)
-$ReportPath = Join-Path $OutputDirectoryPath ("$inputFileName`_1_report.txt")
-$TimelinePath = Join-Path $OutputDirectoryPath ("$inputFileName`_2_timeline.txt")
-$ExcludedPath = Join-Path $OutputDirectoryPath ("$inputFileName`_3_excluded.txt")
 
-# =================================================================================
-# [DOCS] VERBOSE MODE: Educational progress messages for learning
-# =================================================================================
-# Run with -Verbose flag to see step-by-step explanations of what's happening!
-# Example: .\zlog.ps1 "logfile.txt" -Verbose
-# =================================================================================
+$ReportPath    = Join-Path $OutputDirectoryPath ("$inputFileName`_1_report.txt")
+$TimelinePath  = Join-Path $OutputDirectoryPath ("$inputFileName`_2_${FILTERED_FRAGMENT}.txt")
+$ExcludedPath  = Join-Path $OutputDirectoryPath ("$inputFileName`_3_${EXCLUDED_FRAGMENT}.txt")
 
-Write-Verbose "==========================================================================="
-Write-Verbose " LESSON: Reading the log file into memory"
-Write-Verbose "==========================================================================="
-Write-Verbose "WHY? We read the ENTIRE file at once instead of line-by-line because:"
-Write-Verbose "  - Faster: One disk read vs. thousands of small reads"
-Write-Verbose "  - Easier: We can process the data multiple times without re-reading"
-Write-Verbose "  - Trade-off: Uses more RAM (20MB file = 20MB RAM)"
-Write-Verbose ""
+
 Write-Verbose "Reading from incoming folder: $INCOMING_FOLDER"
 Write-Verbose "File: $ZwiftLogFileName"
 Write-Verbose "Full path: $ZwiftLogFilePath"
 
-# Read all lines once for efficiency
+
+# Read file line by line, count only non-blank lines
 $allLines = Get-Content -Path $ZwiftLogFilePath
+$allLines = $allLines | Where-Object { $_.Trim() -ne "" }
+
 $totalLines = $allLines.Count
 
 Write-Verbose "[OK] Successfully read $totalLines lines into memory"
@@ -490,31 +436,6 @@ $searchPatterns = @(
     "shutdown","gracefully","destroyed","ZWATCHDOG"
 ) + $DEVICE_PATTERNS  # Add resolved device patterns
 
-# =================================================================================
-# STEP 1: FILTER THE LOG FILE (Remove the Noise)
-# =================================================================================
-# This is where we decide what log lines are useful and what's just clutter.
-# Think of it like highlighting important sentences in a textbook!
-#
-# The filtering happens in THREE STAGES (like a funnel with 3 levels):
-#   Stage 1: Cast a wide net - Find lines with ANY connection/device keywords
-#   Stage 2: Force-exclude - Remove lines that are ALWAYS useless (battery level, etc)
-#   Stage 3: Smart filtering - Keep important stuff, exclude noise
-#
-# WHY THIS ORDER? We want to be efficient! First we quickly grab candidates (Stage 1),
-# then immediately throw out the worst noise (Stage 2), then carefully decide on the
-# rest (Stage 3). It's faster than checking every line against every rule!
-# =================================================================================
-
-Write-Verbose "==========================================================================="
-Write-Verbose " LESSON: Filtering log lines (removing noise)"
-Write-Verbose "==========================================================================="
-Write-Verbose "STRATEGY: 3-stage filtering process"
-Write-Verbose "  Stage 1: Quick search for ANY connection/device keywords"
-Write-Verbose "  Stage 2: Force-exclude high-noise patterns (battery, advertising)"
-Write-Verbose "  Stage 3: Smart filtering (device-specific + exclusion rules)"
-Write-Verbose ""
-Write-Verbose "Processing $totalLines lines through the filter pipeline..."
 
 # Collect filtered lines (process in-memory to avoid reading file twice)
 $filtered = $allLines | Select-String -Pattern $searchPatterns |
@@ -526,7 +447,7 @@ $filtered = $allLines | Select-String -Pattern $searchPatterns |
         # -----------------------------------------------------------------------------
         # These patterns appear THOUSANDS of times and are NEVER useful for diagnosis.
         # We check them FIRST (before doing more expensive checks) for speed.
-        # Example: "advertising characteristic" appears 5000+ times per session!
+        # Example: "advertising characteristic" appears 5000+ times per ride!
         if ($line -match "advertising characteristic|battery level:") { return $false }
         
         # -----------------------------------------------------------------------------
@@ -537,7 +458,7 @@ $filtered = $allLines | Select-String -Pattern $searchPatterns |
         $devicePatternRegex = ($DEVICE_PATTERNS -join "|")
         if ($line -match $devicePatternRegex) { return $true }
         
-        # Also always keep shutdown events - they tell us how the session ended
+        # Also always keep shutdown events - they tell us how the ride ended
         if ($line -match "Gracefully Shutdown|ZWATCHDOG.*Destroyed|\[OS\].*Shutdown|\[GAME\].*Shutdown|RubberbandingConfig shutdown|AutoSteeringConfig shutdown") { return $true }
         
         # -----------------------------------------------------------------------------
@@ -557,103 +478,6 @@ $filtered = $allLines | Select-String -Pattern $searchPatterns |
         $line -notmatch ($exclusionPatterns -join "|")
     }
 
-# Helper functions
-function Get-Timestamp($line) {
-    if ($line -match '^\[(\d{2}:\d{2}:\d{2})\]') { return $matches[1] }
-    return ""
-}
-
-function Get-LineColor($line) {
-    # +-----------------------------------------------------------------------------+
-    # | [TIP] TRY THIS! Customize the color coding                                 |
-    # +-----------------------------------------------------------------------------+
-    # | 1. Change "Yellow" to "Cyan" for connection attempts                       |
-    # | 2. Add "Magenta" for warnings: if ($line -match "\[WARN\]") { "Magenta" } |
-    # | 3. Make DNS errors stand out: if ($line -match "DNS") { "Red" }           |
-    # | 4. Available colors: Black, DarkBlue, DarkGreen, DarkCyan, DarkRed,        |
-    # |    DarkMagenta, DarkYellow, Gray, DarkGray, Blue, Green, Cyan,            |
-    # |    Red, Magenta, Yellow, White                                             |
-    # +-----------------------------------------------------------------------------+
-    if ($line -match "\[ERROR\]|Error receiving|Error connecting|Error shutting down|Disconnected|Timeout|Failed to connect|has new connection status: disconnected") { return "Red" }
-    if ($line -match "Reconnecting|Connecting to|ConnectWFTNP|Start scanning") { return "Yellow" }
-    if ($line -match "Connected|established|active|has new connection status: connected") { return "Green" }
-    return "White"
-}
-
-function ConvertFrom-TimeString($timeString) {
-    # +-----------------------------------------------------------------------------+
-    # | [WARNING] COMMON MISTAKE: Not validating input before parsing!              |
-    # +-----------------------------------------------------------------------------+
-    # | This function assumes $timeString is always "HH:MM:SS" format.             |
-    # | What if it's empty? What if it's "invalid"? The script would CRASH!        |
-    # |                                                                             |
-    # | SAFER VERSION would add: if (-not $timeString) { return 0 }                |
-    # | Or check: if ($timeString -notmatch '^\d{2}:\d{2}:\d{2}$') { return 0 }  |
-    # |                                                                             |
-    # | FOR THIS SCRIPT: We're safe because we ONLY call this with validated times |
-    # | from Get-Timestamp function. But in real-world code, ALWAYS VALIDATE!      |
-    # +-----------------------------------------------------------------------------+
-    $parts = $timeString -split ':'
-    return [int]$parts[0] * 3600 + [int]$parts[1] * 60 + [int]$parts[2]
-}
-
-function Format-Duration($seconds) {
-    $hours = [math]::Floor($seconds / 3600)
-    $minutes = [math]::Floor(($seconds % 3600) / 60)
-    if ($hours -gt 0) {
-        return "$hours hour(s) $minutes minute(s)"
-    } else {
-        return "$minutes minute(s)"
-    }
-}
-
-function Get-TrainerInfo($logLines, $devicePatterns) {
-    $trainerLines = @()
-    
-    # Build regex from detected device patterns to find ANY trainer
-    $deviceRegex = ($devicePatterns | ForEach-Object { [regex]::Escape($_) }) -join '|'
-    if (-not $deviceRegex) { return $trainerLines }  # No devices configured
-    
-    # Collect relevant log lines that contain trainer information
-    foreach ($line in $logLines) {
-        # Hardware revision
-        if ($line -match '"([^"]+)" hardware revision number:' -and $matches[1] -match $deviceRegex) {
-            $trainerLines += $line
-        }
-        # Firmware version
-        elseif ($line -match '\[BLE\] "([^"]+)" firmware version:' -and $matches[1] -match $deviceRegex) {
-            $trainerLines += $line
-        }
-        # Software version
-        elseif ($line -match '\[BLE\] "([^"]+)" software version:' -and $matches[1] -match $deviceRegex) {
-            $trainerLines += $line
-        }
-        # Serial number
-        elseif ($line -match '\[ZwiftProtocol\] Device serial number:') {
-            $trainerLines += $line
-        }
-        # Feature flags
-        elseif ($line -match "\[BLE\] (?:$deviceRegex).* Features Supported:") {
-            $trainerLines += $line
-        }
-        
-        # Early exit once we have a reasonable amount of info
-        if ($trainerLines.Count -ge 5) {
-            break
-        }
-    }
-    
-    return $trainerLines
-}
-
-function Add-ProblemEntry($eventCollection, $formatScript) {
-    $entries = @()
-    foreach ($evt in $eventCollection) {
-        $entry = & $formatScript $evt
-        $entries += [PSCustomObject]@{ Time=$evt.Time; Entry=$entry }
-    }
-    return $entries
-}
 
 # Print to console with colors
 $printIndex = 0
@@ -686,15 +510,6 @@ $excludedLines = $allLines | Where-Object { $_ -notin $filteredLines }
 $filteredCount = $filteredLines.Count
 $excludedCount = $excludedLines.Count
 
-Write-Verbose "[OK] Filtering complete!"
-Write-Verbose "  Kept: $filteredCount lines ($([math]::Round($filteredCount/$totalLines*100, 1))%)"
-Write-Verbose "  Removed: $excludedCount lines ($([math]::Round($excludedCount/$totalLines*100, 1))%)"
-Write-Verbose ""
-Write-Verbose "[STATS] LEARNING POINT: We removed $([math]::Round($excludedCount/$totalLines*100, 1))% of the file!"
-Write-Verbose "   This is why filtering is important - most log data is noise."
-Write-Verbose "   Focus on the signal (relevant events) not the noise (routine operations)."
-Write-Verbose ""
-
 # =================================================================================
 # STEP 2: BUILD EVENT TIMELINE (Convert Lines to Structured Events)
 # =================================================================================
@@ -717,25 +532,6 @@ Write-Verbose ""
 #
 # WHY USE OBJECTS? So we can later GROUP BY event type, SORT by time, etc.
 # =================================================================================
-
-Write-Verbose "==================================================================="
-Write-Verbose "[TIME] LESSON: Parsing timeline (converting text to data structures)"
-Write-Verbose "==================================================================="
-Write-Verbose "WHY? Text is for humans to read. Data structures are for programs to process."
-Write-Verbose ""
-Write-Verbose "We're converting lines like:"
-Write-Verbose "   '[18:51:05] Device connected' (text)"
-Write-Verbose "Into objects like:"
-Write-Verbose "   {Time:'18:51:05', Event:'Connection', Details:'...'} (data)"
-Write-Verbose ""
-Write-Verbose "[STATS] LEARNING POINT: Once in object/data form, we can:"
-Write-Verbose "   - Sort events by time to see the sequence"
-Write-Verbose "   - Group events by type (all errors together)"
-Write-Verbose "   - Search for patterns (multiple errors in a row)"
-Write-Verbose "   - Calculate time gaps (how long between events)"
-Write-Verbose ""
-Write-Verbose "Parsing $($filteredLines.Count) lines into timeline events..."
-Write-Verbose ""
 
 # Parse timeline events from filtered lines
 $timeline = @()
@@ -761,11 +557,6 @@ for ($i = 0; $i -lt $filteredLines.Count; $i++) {
     #   - It looks at the line text
     #   - Matches it against patterns (using regular expressions)
     #   - Creates the appropriate event object
-    #
-    # TEACHING MOMENT: The -Regex flag tells PowerShell to use regular expressions.
-    # Regular expressions are like "super powerful text search" - way more flexible
-    # than simple text matching! Example: 'Error.*connecting' matches both
-    # "Error connecting" AND "Error while connecting to device"
     #
     # DYNAMIC DEVICE DETECTION: We build regex patterns from $DEVICE_PATTERNS so this
     # works with ANY device brand (Wahoo, Tacx, Saris, Elite, etc.)
@@ -815,50 +606,23 @@ for ($i = 0; $i -lt $filteredLines.Count; $i++) {
 }
 Write-Progress -Activity "Parsing Timeline Events" -Completed
 
-Write-Verbose "[OK] Timeline parsing complete!"
-Write-Verbose "  Created $($timeline.Count) timeline events from $($filteredLines.Count) lines"
-Write-Verbose ""
-Write-Verbose "[STATS] LEARNING POINT: From $($filteredLines.Count) lines of text, we extracted $($timeline.Count) meaningful events."
-Write-Verbose "   This shows the power of data structures - we can now ANALYZE patterns"
-Write-Verbose "   instead of just READING text. Programming is all about transforming"
-Write-Verbose "   unstructured data (text) into structured data (objects) for analysis."
-Write-Verbose ""
-
 # =================================================================================
 # STEP 3: ANALYZE THE TIMELINE (Find Patterns and Problems)
 # =================================================================================
 # Now we have a timeline of events, but we need to UNDERSTAND what happened.
-# This is like a detective analyzing clues to solve a case!
 #
 # The analysis happens in FOUR PHASES:
 #   Phase A: Organize events by type (connections, errors, etc.)
-#   Phase B: Identify session boundaries (when did it start/end?)
-#   Phase C: Filter out pre-session noise (ignore startup events)
+#   Phase B: Identify ride boundaries (when did it start/end?)
+#   Phase C: Filter out pre-ride noise (ignore startup events)
 #   Phase D: Detect problems and classify them
 #
 # WHY PHASE BY PHASE? Each phase builds on the previous one. We need to know
-# when the session started (Phase B) before we can filter pre-session events (Phase C).
+# when the ride started (Phase B) before we can filter pre-ride events (Phase C).
 # =================================================================================
 
 # Build narrative summary
 $narrative = @()
-
-Write-Verbose "==================================================================="
-Write-Verbose " LESSON: Analyzing the timeline (pattern recognition)"
-Write-Verbose "==================================================================="
-Write-Verbose "WHY? We have events, but need to UNDERSTAND what they mean."
-Write-Verbose ""
-Write-Verbose "ANALYSIS STRATEGY: 4-phase approach"
-Write-Verbose "   Phase A: Group events by type (connections, errors, etc.)"
-Write-Verbose "   Phase B: Find session boundaries (start/end times)"
-Write-Verbose "   Phase C: Filter pre-session noise (ignore startup)"
-Write-Verbose "   Phase D: Detect problems and diagnose root causes"
-Write-Verbose ""
-Write-Verbose "[STATS] LEARNING POINT: This is like detective work!"
-Write-Verbose "   We look for PATTERNS, SEQUENCES, and ANOMALIES to understand"
-Write-Verbose "   what happened and WHY. Programming often involves this kind"
-Write-Verbose "   of logical reasoning and root cause analysis."
-Write-Verbose ""
 
 # ---------------------------------------------------------------------------------
 # PHASE A: Organize Events by Type (Grouping)
@@ -869,27 +633,11 @@ Write-Verbose ""
 # Group-Object creates a "hash table" (dictionary) where:
 #   Key = Event type ("BLE Connected", "Connection Error", etc.)
 #   Value = Array of all events of that type
-#
-# This is MUCH faster than searching the entire timeline multiple times!
-# Instead of "loop through 1000 events to find errors" (1000 checks),
-# we do "get the 'Connection Error' group" (1 check).
 # ---------------------------------------------------------------------------------
 $eventsByType = $timeline | Group-Object -Property Event -AsHashTable
 
 # Extract each event type into its own array for easy access
 # The @() wrapper ensures we always get an array (even if empty or single item)
-# +---------------------------------------------------------------------------------+
-# | [WARNING] COMMON MISTAKE: Forgetting to check if arrays are empty!             |
-# +---------------------------------------------------------------------------------+
-# | If we write: $firstError = $errorEvents[0]                                     |
-# | And $errorEvents is empty, PowerShell returns $null (not an error, but wrong!) |
-# |                                                                                 |
-# | SAFER: Always check .Count first:                                              |
-# |   if ($errorEvents.Count -gt 0) { $firstError = $errorEvents[0] }             |
-# |                                                                                 |
-# | We use @() wrapper to ensure these are ALWAYS arrays (even if null/single)    |
-# | Without @(), a single item wouldn't have .Count property!                      |
-# +---------------------------------------------------------------------------------+
 $connectionEvents = @($eventsByType["BLE Connected"])
 $disconnectionEvents = @($eventsByType["BLE Disconnected"])
 $errorEvents = @($eventsByType["Connection Error"])
@@ -900,26 +648,26 @@ $serverHellos = @($eventsByType["Server Hello"])
 $shutdownStarted = @($eventsByType["Shutdown Started"])
 
 # ---------------------------------------------------------------------------------
-# PHASE B: Identify Session Boundaries
+# PHASE B: Identify ride Boundaries
 # ---------------------------------------------------------------------------------
 # A Zwift log file might contain events from BEFORE the actual ride started
 # (app launching, initializing, etc.). We only care about events that happened
-# DURING THE ACTUAL SESSION. So we need to find:
-#   - When did the session START? (first "Server Hello" = connected to game)
-#   - When did the session END? ("Shutdown Started" = user exited)
+# DURING THE ACTUAL ride. So we need to find:
+#   - When did the ride START? (first "Server Hello" = connected to game)
+#   - When did the ride END? ("Shutdown Started" = user exited)
 # ---------------------------------------------------------------------------------
 
-# Session START = first time we connected to Zwift's game server
-$sessionStartTime = if ($serverHellos.Count -gt 0) { $serverHellos[0].Time } else { "00:00:00" }
+# ride START = first time we connected to Zwift's game server
+$ridestartTime = if ($serverHellos.Count -gt 0) { $serverHellos[0].Time } else { "00:00:00" }
 
-# Session END = when graceful shutdown began (or sentinel value if no shutdown found)
+# ride END = when graceful shutdown began (or sentinel value if no shutdown found)
 # TEACHING MOMENT: The sentinel value (99:99:99) is an "impossible time" that means
 # "this never happened". It's like using -1 to mean "not found" in array searches.
 $shutdownTime = $SENTINEL_TIME_MAX
 if ($shutdownStarted.Count -gt 0) { $shutdownTime = $shutdownStarted[0].Time }
 
 # ---------------------------------------------------------------------------------
-# PHASE C: Filter to Post-Session-Start Events Only
+# PHASE C: Filter to Post-ride-Start Events Only
 # ---------------------------------------------------------------------------------
 # WHY? Because errors during app startup aren't interesting. We only care about
 # errors that happened DURING THE RIDE. It's like ignoring pre-game warmup and
@@ -928,9 +676,9 @@ if ($shutdownStarted.Count -gt 0) { $shutdownTime = $shutdownStarted[0].Time }
 # We filter ONCE here and store the results, rather than filtering repeatedly
 # later in the code. This is a PERFORMANCE OPTIMIZATION - filter once, use many times!
 # ---------------------------------------------------------------------------------
-$postStartErrors = $errorEvents | Where-Object { $_.Time -gt $sessionStartTime }
-$postStartTimeouts = $timeouts | Where-Object { $_.Time -gt $sessionStartTime }
-$postStartDnsErrors = $dnsErrors | Where-Object { $_.Time -gt $sessionStartTime }
+$postStartErrors = $errorEvents | Where-Object { $_.Time -gt $ridestartTime }
+$postStartTimeouts = $timeouts | Where-Object { $_.Time -gt $ridestartTime }
+$postStartDnsErrors = $dnsErrors | Where-Object { $_.Time -gt $ridestartTime }
 
 # ---------------------------------------------------------------------------------
 # PHASE D: Detect Problems and Classify Them
@@ -943,12 +691,12 @@ $postStartDnsErrors = $dnsErrors | Where-Object { $_.Time -gt $sessionStartTime 
 # ---------------------------------------------------------------------------------
 
 # Filter to disconnects that happened DURING the ride (not at shutdown)
-$problematicTcpDisconnects = $tcpDisconnects | Where-Object { $_.Time -gt $sessionStartTime }
+$problematicTcpDisconnects = $tcpDisconnects | Where-Object { $_.Time -gt $ridestartTime }
 $problematicDisconnections = $disconnectionEvents | Where-Object { $_.Time -lt $shutdownTime }
 
 Write-Debug " DECISION: Filtering disconnects to find problems"
 Write-Debug "  Total TCP disconnects: $($tcpDisconnects.Count)"
-Write-Debug "  TCP disconnects during session: $($problematicTcpDisconnects.Count)"
+Write-Debug "  TCP disconnects during ride: $($problematicTcpDisconnects.Count)"
 Write-Debug "  Device disconnections before shutdown: $($problematicDisconnections.Count)"
 Write-Debug "  LOGIC: Ignoring shutdown events - users expect disconnects when exiting"
 
@@ -966,8 +714,6 @@ Write-Debug "  LOGIC: Ignoring shutdown events - users expect disconnects when e
 #     3. If <= 5 seconds = seamless (ignore it)
 #     4. If > 5 seconds or no reconnect = disruptive (report it!)
 #
-# TEACHING MOMENT: This is an example of TIME-BASED ANALYSIS. We're not just
-# counting events, we're measuring the TIME BETWEEN them to determine impact.
 # ---------------------------------------------------------------------------------
 $disruptiveTcpDisconnects = @()
 $seamlessReconnectTimes = @()
@@ -1002,8 +748,8 @@ Write-Debug " ANALYSIS RESULT:"
 Write-Debug "  Seamless reconnects (ignored): $($seamlessReconnectTimes.Count)"
 Write-Debug "  Disruptive disconnects (problems): $($disruptiveTcpDisconnects.Count)"
 
-# Calculate session duration for narrative section (before building narrative)
-$sessionDurationLine = ""
+# Calculate ride duration for narrative section (before building narrative)
+$rideDurationLine = ""
 if ($serverHellos.Count -gt 0) {
     $startTime = $serverHellos[0].Time
     # Reuse the shutdownTime calculation from earlier (if not sentinel value)
@@ -1011,7 +757,7 @@ if ($serverHellos.Count -gt 0) {
     
     if ($endTime) {
         $durationSeconds = (ConvertFrom-TimeString $endTime) - (ConvertFrom-TimeString $startTime)
-        $sessionDurationLine = "- Session duration was " + (Format-Duration $durationSeconds)
+        $rideDurationLine = "- ride duration was " + (Format-Duration $durationSeconds)
     }
 }
 
@@ -1019,25 +765,24 @@ if ($serverHellos.Count -gt 0) {
 # STEP 4: BUILD THE DIAGNOSIS (Tell the Story)
 # =================================================================================
 # Now we've organized, filtered, and classified events. Time to build the
-# human-readable narrative that explains what happened during the session.
+# human-readable narrative that explains what happened during the ride.
 #
 # NARRATIVE STRUCTURE:
-#   1. When did the session start?
+#   1. When did the ride start?
 #   2. Did any problems occur? If so, WHAT and WHEN?
 #   3. Can we DIAGNOSE the root cause?
-#   4. How did the session end?
+#   4. How did the ride end?
 #
-# This is where we transform DATA into UNDERSTANDING!
 # =================================================================================
 
 if ($serverHellos.Count -gt 0) {
     $firstHello = $serverHellos[0]
     $narrative += "WHAT HAPPENED:"
-    $narrative += "- Session started at $($firstHello.Time) - Connected to Zwift server"
+    $narrative += "- ride started at $($firstHello.Time) - Connected to Zwift server"
     
     # Add duration if available
-    if ($sessionDurationLine) {
-        $narrative += $sessionDurationLine
+    if ($rideDurationLine) {
+        $narrative += $rideDurationLine
     }
     
     # Identify first problem if any
@@ -1053,12 +798,12 @@ if ($serverHellos.Count -gt 0) {
     $allProblems = @($postStartErrors) + @($postStartTimeouts) + @($disruptiveTcpDisconnects) + @($problematicDisconnections)
     $hasProblems = $allProblems.Count -gt 0
     
-    Write-Debug " DECISION: Does this session have problems?"
+    Write-Debug " DECISION: Does this ride have problems?"
     Write-Debug "  Post-start errors: $($postStartErrors.Count)"
     Write-Debug "  Post-start timeouts: $($postStartTimeouts.Count)"
     Write-Debug "  Disruptive TCP disconnects: $($disruptiveTcpDisconnects.Count)"
     Write-Debug "  Device disconnections: $($problematicDisconnections.Count)"
-    Write-Debug "  VERDICT: $(if ($hasProblems) { 'YES - Problems detected!' } else { 'NO - Clean session' })"
+    Write-Debug "  VERDICT: $(if ($hasProblems) { 'YES - Problems detected!' } else { 'NO - Clean ride' })"
     
     if ($hasProblems) {
         # ---------------------------------------------------------------------------------
@@ -1126,15 +871,15 @@ if ($serverHellos.Count -gt 0) {
             }
         }
     } else {
-        # No problems detected = clean session! Good news!
-        $narrative += "- Session ran without connection issues"
+        # No problems detected = clean ride! Good news!
+        $narrative += "- ride ran without connection issues"
     }
     
-    # Determine how session ended (reuse already-calculated shutdownTime)
+    # Determine how ride ended (reuse already-calculated shutdownTime)
     if ($shutdownStarted.Count -gt 0) {
-        $narrative += "- Session ended at $($shutdownStarted[0].Time) - Graceful shutdown initiated"
+        $narrative += "- ride ended at $($shutdownStarted[0].Time) - Graceful shutdown initiated"
     } else {
-        $narrative += "- Session ended without graceful shutdown - May have crashed or been terminated"
+        $narrative += "- ride ended without graceful shutdown - May have crashed or been terminated"
     }
     
     # Only show server reconnections if they're relevant (close to a problem)
@@ -1200,7 +945,7 @@ if ($hasProblems) {
     }
 }
 
-# Resolution - only show for problematic sessions
+# Resolution - only show for problematic rides
 if ($hasProblems -and $firstProblemTime) {
     $narrative += ""
     $narrative += "RESOLUTION:"
@@ -1213,7 +958,7 @@ if ($hasProblems -and $firstProblemTime) {
     Write-Debug "  Server hellos after problem: $($postProblemServerHellos.Count)"
     Write-Debug "  Device connections after problem: $($postProblemConnections.Count)"
     
-    # If the problem was internet-related (post-session DNS errors), report server reconnection
+    # If the problem was internet-related (post-ride DNS errors), report server reconnection
     if ($postStartDnsErrors.Count -gt 0 -and $postProblemServerHellos.Count -gt 0) {
         $reconnectTime = $postProblemServerHellos[0].Time
         $narrative += "- Connection automatically restored at $reconnectTime when internet connectivity returned"
@@ -1244,7 +989,7 @@ if ($hasProblems -and $firstProblemTime) {
             $narrative += "- Device reconnected at $($recoveryConnect.Time) - $($recoveryConnect.Details)"
         }
     } else {
-        $narrative += "- No recovery detected - session may have ended with errors"
+        $narrative += "- No recovery detected - ride may have ended with errors"
     }
     
     # Add conclusions section for broader context
@@ -1252,14 +997,14 @@ if ($hasProblems -and $firstProblemTime) {
     $narrative += "CONCLUSIONS:"
     
     # Provide context based on the type of problem encountered
-    $postStartDnsErrors = $dnsErrors | Where-Object { $_.Time -gt $sessionStartTime }
+    $postStartDnsErrors = $dnsErrors | Where-Object { $_.Time -gt $ridestartTime }
     if ($postStartDnsErrors.Count -gt 0) {
-        $narrative += "- Internet connectivity was lost during the session, causing DNS resolution failures"
+        $narrative += "- Internet connectivity was lost during the ride, causing DNS resolution failures"
         $narrative += "- This is typically caused by router issues, ISP problems, or local network disruption"
         $narrative += "- The problem is external to Zwift and the trainer - check your internet connection"
     } elseif ($problemType -eq "LAN device connection error") {
         # Check if we have the specific "actively refused" error
-        $postStartErrors = $errorEvents | Where-Object { $_.Time -gt $sessionStartTime }
+        $postStartErrors = $errorEvents | Where-Object { $_.Time -gt $ridestartTime }
         $activelyRefusedError = $postStartErrors | Where-Object { $_.Details -match "actively refused" -and $_.Details -match "LAN Exercise Device" }
         
         if ($activelyRefusedError) {
@@ -1271,11 +1016,11 @@ if ($hasProblems -and $firstProblemTime) {
             $narrative += "- DirectConnect is a Bluetooth over wired LAN technology designed to eliminate wireless interference"
             $narrative += "- This specific error indicates the trainer's DirectConnect firmware/service crashed or malfunctioned"
             $narrative += "- IMPORTANT: Current firmware does NOT automatically fall back to Bluetooth - manual intervention required"
-            $narrative += "- User must manually reconnect the trainer via standard BLE to continue the session"
+            $narrative += "- User must manually reconnect the trainer via standard BLE to continue the ride"
             $narrative += "- Recommended actions: Power cycle the trainer, check for firmware updates, or contact manufacturer support"
             $narrative += "- Note: Automatic BLE fallback may be added in future firmware updates"
         } else {
-            $narrative += "- DirectConnect (BLE/LAN) connection to the trainer failed during the session"
+            $narrative += "- DirectConnect (BLE/LAN) connection to the trainer failed during the ride"
             $narrative += "- DirectConnect is a Bluetooth over wired LAN technology designed to avoid wireless interference"
             $narrative += "- Current firmware does NOT automatically fall back to standard BLE radio connection"
             $narrative += "- User intervention required: manually reconnect the trainer via Bluetooth to continue"
@@ -1285,11 +1030,11 @@ if ($hasProblems -and $firstProblemTime) {
         
         # Note: Trainer details are now in the header section, not duplicated here in narrative
     } elseif ($problemType -match "Disruptive.*disconnection") {
-        $narrative += "- Connection to Zwift servers was disrupted during the session"
+        $narrative += "- Connection to Zwift servers was disrupted during the ride"
         $narrative += "- This may be due to server maintenance, internet instability, or network congestion"
-        $narrative += "- Session was able to reconnect, but temporary data loss may have occurred"
+        $narrative += "- ride was able to reconnect, but temporary data loss may have occurred"
     } elseif ($problemType -match "TCP connection timeout") {
-        $narrative += "- Communication with Zwift servers timed out during the session"
+        $narrative += "- Communication with Zwift servers timed out during the ride"
         $narrative += "- This typically indicates network latency or packet loss issues"
         $narrative += "- Check your internet connection quality and router performance"
     }
@@ -1308,23 +1053,6 @@ if ($trainerInfo -and $trainerInfo.Count -gt 0) {
 # Build summary footer text
 $narrativeText = if ($narrative.Count -gt 0) { "`n" + ($narrative -join "`n") + "`n" } else { "" }
 
-Write-Verbose "==================================================================="
-Write-Verbose "[NOTE] LESSON: Generating final report (communicating results)"
-Write-Verbose "==================================================================="
-Write-Verbose "WHY? Analysis is useless if we can't explain our findings!"
-Write-Verbose ""
-Write-Verbose "REPORT STRUCTURE:"
-Write-Verbose "   1. Summary: Quick overview (times, durations, statistics)"
-Write-Verbose "   2. Narrative: Story of what happened (timeline)"
-Write-Verbose "   3. Problems: Issues detected with root cause analysis"
-Write-Verbose "   4. Recommendations: Actionable solutions"
-Write-Verbose ""
-Write-Verbose "Found $($narrative.Count) narrative points to include in report"
-Write-Verbose ""
-Write-Verbose "[STATS] LEARNING POINT: Good programming includes good communication!"
-Write-Verbose "   The best analysis is worthless if users can't understand it."
-Write-Verbose "   Always think about your AUDIENCE when formatting output."
-Write-Verbose ""
 
 $logFileName = Split-Path $ZwiftLogFilePath -Leaf
 $filterEffectiveness = [math]::Round(($excludedCount / $totalLines) * 100, 1)
@@ -1336,7 +1064,7 @@ $excludedCountFormatted = $excludedCount.ToString("N0")
 
 # Build formatted summary header with aligned columns
 $summaryHeader = @"
-===== Zwift Session Summary =====
+===== Zwift ride Summary =====
 Log File:        $logFileName
 Total Lines:     $totalLinesFormatted log entries
 Kept:            $filteredCountFormatted log entries (relevant for analysis)
